@@ -1,0 +1,36 @@
+# Lab 02 — External Dependencies: mattermost with external PostgreSQL and Redis
+---
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:9
+    container_name: it-stack-mattermost
+    restart: unless-stopped
+    ports:
+      - "8065:$firstPort"
+    environment:
+      - IT_STACK_ENV=lab-02-lan
+      - DB_HOST=
+      - DB_PORT=5432
+      - REDIS_HOST=
+    networks:
+      - it-stack-net
+
+  # Lightweight local DB for lab (replace with lab-db1 in real env)
+  postgres:
+    image: postgres:16
+    container_name: it-stack-mattermost-db
+    environment:
+      POSTGRES_DB: mattermost_db
+      POSTGRES_USER: mattermost_user
+      POSTGRES_PASSWORD: mattermost_pass
+    volumes:
+      - mattermost_pg_data:/var/lib/postgresql/data
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    driver: bridge
+
+volumes:
+  mattermost_pg_data:

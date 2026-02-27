@@ -1,0 +1,29 @@
+# Lab 01 — Standalone: Complete Mattermost team messaging in isolation
+# No external dependencies required.
+---
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:9
+    container_name: it-stack-mattermost
+    restart: unless-stopped
+    ports:
+      - "8065:$firstPort"
+    environment:
+      - IT_STACK_ENV=lab-01-standalone
+    volumes:
+      - mattermost_data:/var/lib/mattermost
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    driver: bridge
+
+volumes:
+  mattermost_data:

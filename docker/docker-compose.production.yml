@@ -1,0 +1,53 @@
+# Lab 06 — Production: mattermost HA-ready with monitoring and external volumes
+---
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:9
+    container_name: it-stack-mattermost
+    restart: always
+    ports:
+      - "8065:$firstPort"
+    environment:
+      - IT_STACK_ENV=production
+      - KEYCLOAK_URL=
+      - DB_HOST=
+      - REDIS_HOST=
+      - GRAYLOG_HOST=
+    volumes:
+      - mattermost_data:/var/lib/mattermost
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
+      restart_policy:
+        condition: any
+        delay: 5s
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://${GRAYLOG_HOST}:12201"
+        tag: "it-stack-mattermost"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    external: true
+    name: it-stack-production
+
+volumes:
+  mattermost_data:
+    external: true
+    name: it-stack-mattermost-data

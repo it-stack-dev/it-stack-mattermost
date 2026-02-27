@@ -1,0 +1,56 @@
+# it-stack-mattermost.yml — IT-Stack Module Manifest
+# Module 07: Mattermost team messaging
+
+module:
+  name: mattermost
+  number: "07"
+  repo: it-stack-dev/it-stack-mattermost
+  version: "0.1.0"
+  phase: 2
+  category: collaboration
+  server: lab-app1
+  description: "Mattermost team messaging"
+
+upstream:
+  name: Mattermost
+  image: mattermost/mattermost-team-edition:9
+  license: MIT
+
+ports:
+  - 8065 (HTTP)
+
+labs:
+  - id: "07-01"
+    name: Standalone
+    docker_compose: docker/docker-compose.standalone.yml
+    test_script: tests/labs/test-lab-07-01.sh
+  - id: "07-02"
+    name: External Dependencies
+    docker_compose: docker/docker-compose.lan.yml
+    test_script: tests/labs/test-lab-07-02.sh
+  - id: "07-03"
+    name: Advanced Features
+    docker_compose: docker/docker-compose.advanced.yml
+    test_script: tests/labs/test-lab-07-03.sh
+  - id: "07-04"
+    name: SSO Integration
+    docker_compose: docker/docker-compose.sso.yml
+    test_script: tests/labs/test-lab-07-04.sh
+  - id: "07-05"
+    name: Advanced Integration
+    docker_compose: docker/docker-compose.integration.yml
+    test_script: tests/labs/test-lab-07-05.sh
+  - id: "07-06"
+    name: Production Deployment
+    docker_compose: docker/docker-compose.production.yml
+    test_script: tests/labs/test-lab-07-06.sh
+
+resources:
+  cpu_cores: 2
+  ram_gb: 4
+  disk_gb: 20
+
+health_check:
+  endpoint: /health
+  metrics_endpoint: /metrics
+  log_path: /var/log/mattermost/
