@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # test-lab-07-02.sh — Lab 07-02: External Dependencies
 # Module 07: Mattermost — external PostgreSQL, Redis, mailhog SMTP relay
 set -euo pipefail
