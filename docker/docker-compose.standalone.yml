@@ -1,29 +1,67 @@
-# Lab 01 — Standalone: Complete Mattermost team messaging in isolation
-# No external dependencies required.
+# Lab 01 — Standalone: Mattermost team messaging
+# Self-contained — Mattermost + PostgreSQL sidecar. No external dependencies.
+# Access: http://localhost:8065
 ---
 services:
-  mattermost:
-    image: mattermost/mattermost-team-edition:9
-    container_name: it-stack-mattermost
+  db:
+    image: postgres:16-alpine
+    container_name: it-stack-mattermost-db
     restart: unless-stopped
-    ports:
-      - "8065:$firstPort"
     environment:
-      - IT_STACK_ENV=lab-01-standalone
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: Lab01Password!
     volumes:
-      - mattermost_data:/var/lib/mattermost
+      - mattermost-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mattermost-standalone-net
+
+  mattermost:
+    image: mattermost/mattermost-team-edition:9.3
+    container_name: it-stack-mattermost-standalone
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8065:8065"
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: "postgres://mmuser:Lab01Password!@db:5432/mattermost?sslmode=disable"
+      MM_SERVICESETTINGS_SITEURL: "http://localhost:8065"
+      MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL: "true"
+      MM_EMAILSETTINGS_ENABLESIGNINWITHEMAIL: "true"
+      MM_EMAILSETTINGS_SMTPSERVER: ""
+      MM_EMAILSETTINGS_ENABLESMTPAUTH: "false"
+      MM_LOGSETTINGS_CONSOLELEVEL: INFO
+    volumes:
+      - mattermost-data:/mattermost/data
+      - mattermost-logs:/mattermost/logs
+      - mattermost-config:/mattermost/config
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8065/api/v4/system/ping | grep -q 'status.*OK' || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 90s
     networks:
-      - it-stack-net
+      - mattermost-standalone-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
 networks:
-  it-stack-net:
+  mattermost-standalone-net:
     driver: bridge
 
 volumes:
-  mattermost_data:
+  mattermost-db-data:
+  mattermost-data:
+  mattermost-logs:
+  mattermost-config:

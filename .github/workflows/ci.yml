@@ -72,37 +72,32 @@ jobs:
           sarif_file: trivy-results.sarif
 
   lab-01-smoke:
-    name: Lab 01 — Smoke Test
+    name: Lab 01 — Mattermost standalone (API ping, team, channel, post)
     runs-on: ubuntu-latest
     needs: validate
-    continue-on-error: true   # scaffold stubs; full lab runs on real VMs
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate CI env file
-        run: |
-          # Copy example env and inject CI-safe defaults for any unset port vars
-          if [ -f .env.example ]; then cp .env.example .env; fi
-          # Set port placeholder vars used in scaffold compose files
-          echo "firstPort=389"   >> .env
-          echo "secondPort=9090" >> .env
+      - name: Install tools
+        run: sudo apt-get install -y curl
 
-      - name: Validate standalone compose can start
+      - name: Validate standalone compose
         run: |
-          docker compose -f docker/docker-compose.standalone.yml config --no-interpolate -q
-          echo "Standalone compose structure is valid"
+          docker compose -f docker/docker-compose.standalone.yml config -q
+          echo "Standalone compose valid"
 
       - name: Start standalone stack
         run: docker compose -f docker/docker-compose.standalone.yml up -d
 
-      - name: Wait for health
-        run: |
-          echo "Waiting for services..."
-          sleep 30
-          docker compose -f docker/docker-compose.standalone.yml ps
+      - name: Wait for PostgreSQL
+        run: timeout 60 bash -c 'until docker compose -f docker/docker-compose.standalone.yml exec -T db pg_isready -U mmuser; do sleep 3; done'
 
-      - name: Run Lab 01 test script
-        run: bash tests/labs/test-lab-01.sh
+      - name: Wait for Mattermost API
+        run: timeout 120 bash -c 'until curl -sf http://localhost:8065/api/v4/system/ping | grep -q OK; do sleep 5; done'
+
+      - name: Run Lab 07-01 test script
+        run: bash tests/labs/test-lab-07-01.sh
 
       - name: Collect logs on failure
         if: failure()
