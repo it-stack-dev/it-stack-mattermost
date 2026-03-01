@@ -1,53 +1,249 @@
-# Lab 06 — Production: mattermost HA-ready with monitoring and external volumes
----
+# docker-compose.production.yml -- Lab 06: Production Deployment
+# Mattermost + PostgreSQL + Redis + Keycloak + OpenLDAP + MinIO — Production Grade
+# Features: resource limits, restart=always, log rotation, persistent volumes,
+#            LDAP sync, OIDC SSO, MinIO S3, Prometheus metrics
+#
+# Ports:
+#   8205 -- Mattermost
+#   8206 -- Keycloak admin console
+#   9110 -- MinIO API
+#   9111 -- MinIO console
+#   3896 -- OpenLDAP
+#
+# Credentials:
+#   LDAP:     cn=admin,dc=lab,dc=local / LdapProd06!
+#   DB:       mattermost / Prod06Password!
+#   Redis:    Prod06Redis!
+#   Keycloak: admin / Prod06Admin!
+#   MinIO:    minio-prod-06 / MinioProd06Secret!
+#   OIDC:     mattermost-prod-06
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-mm-prod-env: &mm-prod-env
+  MM_SQLSETTINGS_DRIVERNAME: postgres
+  MM_SQLSETTINGS_DATASOURCE: "postgres://mattermost:Prod06Password!@mm-prod-db:5432/mattermost?sslmode=disable"
+  MM_SERVICESETTINGS_SITEURL: http://localhost:8205
+  MM_SERVICESETTINGS_READTIMEOUT: "300"
+  MM_SERVICESETTINGS_WRITETIMEOUT: "300"
+  MM_SERVICESETTINGS_MAXIMUMLOGINATTEMPTS: "10"
+  MM_OPENIDSETTINGS_ENABLE: "true"
+  MM_OPENIDSETTINGS_DISCOVERYENDPOINT: http://mm-prod-keycloak:8080/realms/it-stack/.well-known/openid-configuration
+  MM_OPENIDSETTINGS_ID: mattermost-client
+  MM_OPENIDSETTINGS_SECRET: mattermost-prod-06
+  MM_LDAPSETTINGS_ENABLE: "true"
+  MM_LDAPSETTINGS_LDAPSERVER: mm-prod-ldap
+  MM_LDAPSETTINGS_LDAPPORT: "389"
+  MM_LDAPSETTINGS_BINDUSERNAME: "cn=readonly,dc=lab,dc=local"
+  MM_LDAPSETTINGS_BINDPASSWORD: ReadOnlyProd06!
+  MM_LDAPSETTINGS_BASEDN: "dc=lab,dc=local"
+  MM_LDAPSETTINGS_USERIDATTRIBUTE: uid
+  MM_LDAPSETTINGS_EMAILATTRIBUTE: mail
+  MM_LDAPSETTINGS_USERNAMEATRIBUTE: uid
+  MM_LDAPSETTINGS_FIRSTNAMEATTRIBUTE: givenName
+  MM_LDAPSETTINGS_LASTNAMEATTRIBUTE: sn
+  MM_FILESETTINGS_DRIVERNAME: amazons3
+  MM_FILESETTINGS_AMAZONS3ACCESSKEYID: minio-prod-06
+  MM_FILESETTINGS_AMAZONS3SECRETACCESSKEY: MinioProd06Secret!
+  MM_FILESETTINGS_AMAZONS3BUCKET: mattermost
+  MM_FILESETTINGS_AMAZONS3ENDPOINT: mm-prod-minio:9000
+  MM_FILESETTINGS_AMAZONS3SSL: "false"
+  MM_FILESETTINGS_AMAZONS3PATHSTYLE: "true"
+  MM_FILESETTINGS_MAXFILESIZE: "524288000"
+  MM_METRICSSETTINGS_ENABLE: "true"
+  MM_METRICSSETTINGS_LISTENADDRESS: ":8067"
+
 services:
-  mattermost:
-    image: mattermost/mattermost-team-edition:9
-    container_name: it-stack-mattermost
+  mm-prod-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: mm-prod-ldap
     restart: always
-    ports:
-      - "8065:$firstPort"
     environment:
-      - IT_STACK_ENV=production
-      - KEYCLOAK_URL=
-      - DB_HOST=
-      - REDIS_HOST=
-      - GRAYLOG_HOST=
+      LDAP_ORGANISATION: "IT-Stack Production"
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapProd06!
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: readonly
+      LDAP_READONLY_USER_PASSWORD: ReadOnlyProd06!
+    ports:
+      - "3896:389"
     volumes:
-      - mattermost_data:/var/lib/mattermost
-      - /etc/ssl/certs:/etc/ssl/certs:ro
+      - mm-prod-ldap-data:/var/lib/ldap
+      - mm-prod-ldap-config:/etc/ldap/slapd.d
+    networks:
+      - mm-prod-net
     deploy:
-      replicas: 1
       resources:
         limits:
-          cpus: "4.0"
-          memory: G
-        reservations:
-          cpus: "1.0"
-          memory: 1G
-      restart_policy:
-        condition: any
-        delay: 5s
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://${GRAYLOG_HOST}:12201"
-        tag: "it-stack-mattermost"
+          memory: 256m
+          cpus: "0.5"
+    logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapProd06! > /dev/null 2>&1"]
+      interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 120s
-    networks:
-      - it-stack-net
+      retries: 5
+      start_period: 20s
 
-networks:
-  it-stack-net:
-    external: true
-    name: it-stack-production
+  mm-prod-db:
+    image: postgres:16-alpine
+    container_name: mm-prod-db
+    restart: always
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mattermost
+      POSTGRES_PASSWORD: Prod06Password!
+    volumes:
+      - mm-prod-db-data:/var/lib/postgresql/data
+    networks:
+      - mm-prod-data-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mm-prod-redis:
+    image: redis:7-alpine
+    container_name: mm-prod-redis
+    restart: always
+    command: >
+      redis-server
+      --requirepass Prod06Redis!
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - mm-prod-redis-data:/data
+    networks:
+      - mm-prod-net
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+          cpus: "0.5"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "Prod06Redis!", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mm-prod-minio:
+    image: minio/minio:latest
+    container_name: mm-prod-minio
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio-prod-06
+      MINIO_ROOT_PASSWORD: MinioProd06Secret!
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    ports:
+      - "9110:9000"
+      - "9111:9001"
+    volumes:
+      - mm-prod-minio-data:/data
+    networks:
+      - mm-prod-net
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  mm-prod-keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: mm-prod-keycloak
+    restart: always
+    command: start-dev
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Prod06Admin!
+    ports:
+      - "8206:8080"
+    networks:
+      - mm-prod-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready | grep -q UP || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  mm-prod-app:
+    image: mattermost/mattermost-team-edition:latest
+    container_name: mm-prod-app
+    restart: always
+    depends_on:
+      mm-prod-db:
+        condition: service_healthy
+      mm-prod-redis:
+        condition: service_healthy
+      mm-prod-minio:
+        condition: service_healthy
+      mm-prod-keycloak:
+        condition: service_healthy
+      mm-prod-ldap:
+        condition: service_healthy
+    environment:
+      <<: *mm-prod-env
+    ports:
+      - "8205:8065"
+    volumes:
+      - mm-prod-data:/mattermost/data
+      - mm-prod-logs:/mattermost/logs
+      - mm-prod-config:/mattermost/config
+    networks:
+      - mm-prod-net
+      - mm-prod-data-net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 512m
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8065/api/v4/system/ping"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
 volumes:
-  mattermost_data:
-    external: true
-    name: it-stack-mattermost-data
+  mm-prod-ldap-data:
+  mm-prod-ldap-config:
+  mm-prod-db-data:
+  mm-prod-redis-data:
+  mm-prod-minio-data:
+  mm-prod-data:
+  mm-prod-logs:
+  mm-prod-config:
+
+networks:
+  mm-prod-net:
+  mm-prod-data-net:
