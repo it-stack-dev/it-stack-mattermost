@@ -1,26 +1,177 @@
-# Lab 05 — Advanced Integration: mattermost with full IT-Stack ecosystem
----
+# docker-compose.integration.yml -- Lab 05: Advanced Integration
+# Mattermost + OpenLDAP (FreeIPA sim) + PostgreSQL + Redis + Keycloak + MinIO
+# Lab 05 tests: LDAP user sync, OIDC SSO, S3 file storage, API verification
+#
+# Ports:
+#   8105 -- Mattermost
+#   8106 -- Keycloak admin console
+#   3891 -- OpenLDAP
+#   9100 -- MinIO API
+#   9101 -- MinIO console
+#
+# Credentials:
+#   LDAP admin:    cn=admin,dc=lab,dc=local / LdapAdmin05!
+#   LDAP readonly: cn=readonly,dc=lab,dc=local / ReadOnly05!
+#   DB:            mattermost / Lab05Password!
+#   Redis:         Lab05Redis!
+#   Keycloak:      admin / Lab05Admin!
+#   MinIO:         minio-access-05 / MinioSecret05!
+#   OIDC secret:   mattermost-secret-05
+
+x-mm-int-env: &mm-int-env
+  MM_SQLSETTINGS_DRIVERNAME: postgres
+  MM_SQLSETTINGS_DATASOURCE: "postgres://mattermost:Lab05Password!@mm-int-db:5432/mattermost?sslmode=disable"
+  MM_SERVICESETTINGS_SITEURL: http://localhost:8105
+  MM_OPENIDSETTINGS_ENABLE: "true"
+  MM_OPENIDSETTINGS_DISCOVERYENDPOINT: http://mm-int-keycloak:8080/realms/it-stack/.well-known/openid-configuration
+  MM_OPENIDSETTINGS_ID: mattermost-client
+  MM_OPENIDSETTINGS_SECRET: mattermost-secret-05
+  MM_LDAPSETTINGS_ENABLE: "true"
+  MM_LDAPSETTINGS_LDAPSERVER: mm-int-ldap
+  MM_LDAPSETTINGS_LDAPPORT: "389"
+  MM_LDAPSETTINGS_BINDUSERNAME: "cn=readonly,dc=lab,dc=local"
+  MM_LDAPSETTINGS_BINDPASSWORD: ReadOnly05!
+  MM_LDAPSETTINGS_BASEDN: "dc=lab,dc=local"
+  MM_LDAPSETTINGS_USERIDATTRIBUTE: uid
+  MM_LDAPSETTINGS_EMAILATTRIBUTE: mail
+  MM_LDAPSETTINGS_USERNAMEATRIBUTE: uid
+  MM_LDAPSETTINGS_FIRSTNAMEATTRIBUTE: givenName
+  MM_LDAPSETTINGS_LASTNAMEATTRIBUTE: sn
+  MM_FILESETTINGS_DRIVERNAME: amazons3
+  MM_FILESETTINGS_AMAZONS3ACCESSKEYID: minio-access-05
+  MM_FILESETTINGS_AMAZONS3SECRETACCESSKEY: MinioSecret05!
+  MM_FILESETTINGS_AMAZONS3BUCKET: mattermost
+  MM_FILESETTINGS_AMAZONS3ENDPOINT: mm-int-minio:9000
+  MM_FILESETTINGS_AMAZONS3SSL: "false"
+  MM_FILESETTINGS_AMAZONS3PATHSTYLE: "true"
+
 services:
-  mattermost:
-    image: mattermost/mattermost-team-edition:9
-    container_name: it-stack-mattermost
-    restart: unless-stopped
-    ports:
-      - "8065:$firstPort"
+  mm-int-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: mm-int-ldap
     environment:
-      - IT_STACK_ENV=lab-05-integration
-      - KEYCLOAK_URL=
-      - DB_HOST=
-      - REDIS_HOST=
-      - SMTP_HOST=
-      - GRAYLOG_HOST=
-    extra_hosts:
-      - "lab-id1:10.0.50.11"
-      - "lab-db1:10.0.50.12"
-      - "lab-proxy1:10.0.50.15"
+      LDAP_ORGANISATION: "IT-Stack Lab"
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapAdmin05!
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: readonly
+      LDAP_READONLY_USER_PASSWORD: ReadOnly05!
+    ports:
+      - "3891:389"
     networks:
-      - it-stack-net
+      - mm-int-net
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapAdmin05! > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  mm-int-db:
+    image: postgres:16-alpine
+    container_name: mm-int-db
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mattermost
+      POSTGRES_PASSWORD: Lab05Password!
+    volumes:
+      - mm-int-db-data:/var/lib/postgresql/data
+    networks:
+      - mm-int-data-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mm-int-redis:
+    image: redis:7-alpine
+    container_name: mm-int-redis
+    command: redis-server --requirepass Lab05Redis!
+    networks:
+      - mm-int-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "Lab05Redis!", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mm-int-minio:
+    image: minio/minio:latest
+    container_name: mm-int-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio-access-05
+      MINIO_ROOT_PASSWORD: MinioSecret05!
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    volumes:
+      - mm-int-minio-data:/data
+    networks:
+      - mm-int-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  mm-int-keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: mm-int-keycloak
+    command: start-dev
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Lab05Admin!
+    ports:
+      - "8106:8080"
+    networks:
+      - mm-int-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready | grep -q UP || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  mm-int-app:
+    image: mattermost/mattermost-team-edition:latest
+    container_name: mm-int-app
+    depends_on:
+      mm-int-db:
+        condition: service_healthy
+      mm-int-redis:
+        condition: service_healthy
+      mm-int-minio:
+        condition: service_healthy
+      mm-int-keycloak:
+        condition: service_healthy
+      mm-int-ldap:
+        condition: service_healthy
+    environment:
+      <<: *mm-int-env
+    ports:
+      - "8105:8065"
+    volumes:
+      - mm-int-data:/mattermost/data
+      - mm-int-logs:/mattermost/logs
+    networks:
+      - mm-int-net
+      - mm-int-data-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8065/api/v4/system/ping"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  mm-int-db-data:
+  mm-int-minio-data:
+  mm-int-data:
+  mm-int-logs:
 
 networks:
-  it-stack-net:
-    driver: bridge
+  mm-int-net:
+  mm-int-data-net:
