@@ -169,3 +169,30 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose -f docker/docker-compose.advanced.yml down -v
+  lab-04-smoke:
+    name: Lab 04 — Mattermost SSO Integration (Keycloak OIDC)
+    runs-on: ubuntu-latest
+    needs: validate
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get install -y curl
+      - name: Validate SSO compose
+        run: docker compose -f docker/docker-compose.sso.yml config -q && echo "SSO compose valid"
+      - name: Start SSO stack
+        run: docker compose -f docker/docker-compose.sso.yml up -d
+      - name: Wait for Keycloak
+        run: timeout 120 bash -c 'until curl -sf http://localhost:8085/health/ready | grep -q UP; do sleep 5; done'
+      - name: Wait for PostgreSQL
+        run: timeout 60 bash -c 'until docker compose -f docker/docker-compose.sso.yml exec -T db pg_isready -U mmuser -d mattermost; do sleep 3; done'
+      - name: Wait for Mattermost API
+        run: timeout 120 bash -c 'until curl -sf http://localhost:8065/api/v4/system/ping | grep -q status; do sleep 5; done'
+      - name: Run Lab 07-04 test script
+        run: bash tests/labs/test-lab-07-04.sh
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.sso.yml logs
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker/docker-compose.sso.yml down -v
