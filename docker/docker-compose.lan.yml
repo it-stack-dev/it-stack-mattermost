@@ -1,36 +1,112 @@
-# Lab 02 — External Dependencies: mattermost with external PostgreSQL and Redis
----
-services:
-  mattermost:
-    image: mattermost/mattermost-team-edition:9
-    container_name: it-stack-mattermost
-    restart: unless-stopped
-    ports:
-      - "8065:$firstPort"
-    environment:
-      - IT_STACK_ENV=lab-02-lan
-      - DB_HOST=
-      - DB_PORT=5432
-      - REDIS_HOST=
-    networks:
-      - it-stack-net
-
-  # Lightweight local DB for lab (replace with lab-db1 in real env)
-  postgres:
-    image: postgres:16
-    container_name: it-stack-mattermost-db
-    environment:
-      POSTGRES_DB: mattermost_db
-      POSTGRES_USER: mattermost_user
-      POSTGRES_PASSWORD: mattermost_pass
-    volumes:
-      - mattermost_pg_data:/var/lib/postgresql/data
-    networks:
-      - it-stack-net
+# =============================================================================
+# IT-Stack — Mattermost — Lab 02: External Dependencies
+# =============================================================================
+# Separate app/data networks simulate a real LAN topology.
+# Adds mailhog SMTP relay for email notification testing.
+#
+# Services:
+#   db          — PostgreSQL 16 (mm-data-net only)
+#   redis       — Redis 7 (mm-data-net only)
+#   smtp        — Mailhog 1.0.1 SMTP relay  (:1025 internal, :8025 web UI)
+#   mattermost  — Mattermost Team Edition 9.3  (:8065)
+#
+# Usage:
+#   docker compose -f docker/docker-compose.lan.yml up -d
+#   docker compose -f docker/docker-compose.lan.yml down -v
+# =============================================================================
 
 networks:
-  it-stack-net:
+  mm-app-net:
+    driver: bridge
+  mm-data-net:
     driver: bridge
 
 volumes:
-  mattermost_pg_data:
+  mm-lan-db:
+  mm-lan-redis:
+  mm-lan-data:
+  mm-lan-logs:
+  mm-lan-config:
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    container_name: mm-lan-db
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: Lab02Password!
+    volumes:
+      - mm-lan-db:/var/lib/postgresql/data
+    networks:
+      - mm-data-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: mm-lan-redis
+    command: redis-server --save 60 1
+    volumes:
+      - mm-lan-redis:/data
+    networks:
+      - mm-data-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  smtp:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mm-lan-smtp
+    ports:
+      - "8025:8025"    # Mailhog web UI
+    networks:
+      - mm-app-net
+    restart: unless-stopped
+
+  mattermost:
+    image: mattermost/mattermost-team-edition:9.3
+    container_name: mm-lan-app
+    ports:
+      - "8065:8065"
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://mmuser:Lab02Password!@db:5432/mattermost?sslmode=disable
+      MM_SERVICESETTINGS_SITEURL: http://localhost:8065
+      # SMTP relay via mailhog
+      MM_EMAILSETTINGS_SMTPSERVER: smtp
+      MM_EMAILSETTINGS_SMTPPORT: "1025"
+      MM_EMAILSETTINGS_CONNECTIONSECURITY: ""
+      MM_EMAILSETTINGS_ENABLESMTPAUTH: "false"
+      MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS: "true"
+      MM_EMAILSETTINGS_REQUIREEMAILVERIFICATION: "false"
+      MM_EMAILSETTINGS_FEEDBACKNAME: IT-Stack Lab
+      MM_EMAILSETTINGS_FEEDBACKEMAIL: noreply@lab.local
+      MM_EMAILSETTINGS_FEEDBACKORGANIZATION: IT-Stack
+    volumes:
+      - mm-lan-data:/mattermost/data
+      - mm-lan-logs:/mattermost/logs
+      - mm-lan-config:/mattermost/config
+    networks:
+      - mm-app-net
+      - mm-data-net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8065/api/v4/system/ping | grep -q status"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
