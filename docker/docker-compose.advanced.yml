@@ -1,34 +1,134 @@
-# Lab 03 — Advanced Features: mattermost with TLS, resource limits, logging
----
+# docker-compose.advanced.yml — Lab 07-03: Advanced Features
+# Mattermost with PostgreSQL, Redis, mailhog, MinIO S3 storage, resource limits
+name: mattermost-advanced
+
 services:
-  mattermost:
-    image: mattermost/mattermost-team-edition:9
-    container_name: it-stack-mattermost
-    restart: unless-stopped
-    ports:
-      - "8065:$firstPort"
+  db:
+    image: postgres:16-alpine
+    container_name: mm-adv-db
     environment:
-      - IT_STACK_ENV=lab-03-advanced
-      - TLS_ENABLED=true
+      POSTGRES_DB: mattermost
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: Lab03Password!
     volumes:
-      - mattermost_data:/var/lib/mattermost
-      - ./certs:/etc/ssl/certs:ro
+      - mm_adv_db:/var/lib/postgresql/data
+    networks:
+      - mm-data-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmuser -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: G
-    logging:
-      driver: json-file
-      options:
-        max-size: "100m"
-        max-file: "5"
-    networks:
-      - it-stack-net
+          cpus: "0.5"
+          memory: 512M
+    restart: unless-stopped
 
-networks:
-  it-stack-net:
-    driver: bridge
+  redis:
+    image: redis:7-alpine
+    container_name: mm-adv-redis
+    command: redis-server --save 60 1 --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - mm-data-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 192M
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: mm-adv-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: Lab03Minio!
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - mm_adv_minio:/data
+    networks:
+      - mm-data-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    restart: unless-stopped
+
+  smtp:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mm-adv-smtp
+    ports:
+      - "8025:8025"
+    networks:
+      - mm-app-net
+    restart: unless-stopped
+
+  mattermost:
+    image: mattermost/mattermost-team-edition:9.3
+    container_name: mm-adv-app
+    ports:
+      - "8065:8065"
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: "postgres://mmuser:Lab03Password!@db:5432/mattermost?sslmode=disable&connect_timeout=10"
+      MM_EMAILSETTINGS_SMTPSERVER: smtp
+      MM_EMAILSETTINGS_SMTPPORT: "1025"
+      MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS: "true"
+      MM_SERVICESETTINGS_SITEURL: "http://localhost:8065"
+      MM_SERVICESETTINGS_READTIMEOUT: "300"
+      MM_SERVICESETTINGS_WRITETIMEOUT: "300"
+      MM_SERVICESETTINGS_MAXLOGINRETRIES: "3"
+      MM_FILESETTINGS_DRIVERNAME: amazons3
+      MM_FILESETTINGS_AMAZONS3ACCESSKEYID: minioadmin
+      MM_FILESETTINGS_AMAZONS3SECRETACCESSKEY: Lab03Minio!
+      MM_FILESETTINGS_AMAZONS3BUCKET: mattermost
+      MM_FILESETTINGS_AMAZONS3ENDPOINT: "minio:9000"
+      MM_FILESETTINGS_AMAZONS3SSL: "false"
+      MM_FILESETTINGS_AMAZONS3PATHSTYLE: "true"
+      MM_FILESETTINGS_MAXFILESIZE: "524288000"
+    volumes:
+      - mm_adv_config:/mattermost/config
+      - mm_adv_logs:/mattermost/logs
+    networks:
+      - mm-app-net
+      - mm-data-net
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8065/api/v4/system/ping | grep -q status"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    restart: unless-stopped
 
 volumes:
-  mattermost_data:
+  mm_adv_db:
+  mm_adv_minio:
+  mm_adv_config:
+  mm_adv_logs:
+
+networks:
+  mm-app-net:
+  mm-data-net:
