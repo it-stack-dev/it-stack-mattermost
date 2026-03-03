@@ -31,7 +31,7 @@ x-mm-int-env: &mm-int-env
   MM_LDAPSETTINGS_LDAPPORT: "389"
   MM_LDAPSETTINGS_BINDUSERNAME: "cn=readonly,dc=lab,dc=local"
   MM_LDAPSETTINGS_BINDPASSWORD: ReadOnly05!
-  MM_LDAPSETTINGS_BASEDN: "dc=lab,dc=local"
+  MM_LDAPSETTINGS_BASEDN: "cn=users,cn=accounts,dc=lab,dc=local"
   MM_LDAPSETTINGS_USERIDATTRIBUTE: uid
   MM_LDAPSETTINGS_EMAILATTRIBUTE: mail
   MM_LDAPSETTINGS_USERNAMEATRIBUTE: uid
@@ -116,6 +116,24 @@ services:
       timeout: 10s
       retries: 5
 
+  mm-int-ldap-seed:
+    image: osixia/openldap:1.5.0
+    container_name: mm-int-ldap-seed
+    command: >
+      bash -c "sleep 5 &&
+      ldapadd -x -H ldap://mm-int-ldap:389
+      -D cn=admin,dc=lab,dc=local -w LdapAdmin05!
+      -f /seed/mattermost-ldap-seed.ldif &&
+      echo 'Seed complete'"
+    volumes:
+      - ../docker/mattermost-ldap-seed.ldif:/seed/mattermost-ldap-seed.ldif:ro
+    networks:
+      - mm-int-net
+    depends_on:
+      mm-int-ldap:
+        condition: service_healthy
+    restart: "no"
+
   mm-int-keycloak:
     image: quay.io/keycloak/keycloak:24.0
     container_name: mm-int-keycloak
@@ -124,6 +142,9 @@ services:
       KC_HEALTH_ENABLED: "true"
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: Lab05Admin!
+    depends_on:
+      mm-int-ldap-seed:
+        condition: service_completed_successfully
     ports:
       - "8106:8080"
     networks:

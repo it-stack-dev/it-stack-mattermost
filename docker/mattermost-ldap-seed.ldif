@@ -1,0 +1,88 @@
+# mattermost-ldap-seed.ldif
+# Seeds FreeIPA-compatible LDAP structure into the OpenLDAP integration test
+# container for the Mattermost Lab 05 integration test.
+#
+# Used by: docker/docker-compose.integration.yml → mm-int-ldap-seed service
+# Mattermost LDAP: basedn dc=lab,dc=local, uid attribute, mail attribute
+# Keycloak federation: cn=users,cn=accounts,dc=lab,dc=local (rhds vendor)
+
+# ── FreeIPA-compatible accounts container ─────────────────────────────────────
+dn: cn=accounts,dc=lab,dc=local
+objectClass: organizationalRole
+objectClass: top
+cn: accounts
+description: FreeIPA-compatible accounts container
+
+dn: cn=users,cn=accounts,dc=lab,dc=local
+objectClass: organizationalRole
+objectClass: top
+cn: users
+description: IPA user accounts
+
+dn: cn=groups,cn=accounts,dc=lab,dc=local
+objectClass: organizationalRole
+objectClass: top
+cn: groups
+description: IPA user groups
+
+# ── Test users ────────────────────────────────────────────────────────────────
+dn: uid=mmadmin,cn=users,cn=accounts,dc=lab,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: mmadmin
+cn: MM Admin
+sn: Admin
+givenName: MM
+displayName: MM Admin
+mail: mmadmin@lab.local
+telephoneNumber: +1-555-200-0001
+title: Chat Administrator
+userPassword: Lab05Password!
+
+dn: uid=mmuser1,cn=users,cn=accounts,dc=lab,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: mmuser1
+cn: MM User One
+sn: One
+givenName: MM
+displayName: MM User One
+mail: mmuser1@lab.local
+telephoneNumber: +1-555-200-0002
+title: Engineer
+userPassword: Lab05Password!
+
+dn: uid=mmuser2,cn=users,cn=accounts,dc=lab,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: mmuser2
+cn: MM User Two
+sn: Two
+givenName: MM
+displayName: MM User Two
+mail: mmuser2@lab.local
+telephoneNumber: +1-555-200-0003
+title: Analyst
+userPassword: Lab05Password!
+
+# ── Groups ────────────────────────────────────────────────────────────────────
+dn: cn=admins,cn=groups,cn=accounts,dc=lab,dc=local
+objectClass: groupOfNames
+objectClass: top
+cn: admins
+description: Mattermost administrators
+member: uid=mmadmin,cn=users,cn=accounts,dc=lab,dc=local
+
+dn: cn=mm-users,cn=groups,cn=accounts,dc=lab,dc=local
+objectClass: groupOfNames
+objectClass: top
+cn: mm-users
+description: Mattermost regular users
+member: uid=mmuser1,cn=users,cn=accounts,dc=lab,dc=local
+member: uid=mmuser2,cn=users,cn=accounts,dc=lab,dc=local
